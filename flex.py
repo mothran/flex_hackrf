@@ -19,6 +19,7 @@
 # the Free Software Foundation, Inc., 51 Franklin Street,
 # Boston, MA 02110-1301, USA.
 #
+#   Modified by Mothran for use with HackRF
 
 from gnuradio import gr, gru, optfir, eng_notation, blks2, pager
 from gnuradio.eng_option import eng_option
@@ -70,8 +71,8 @@ class app_top_block(gr.top_block):
             rate = self.u.get_sample_rate()
 
             if rate != 3.125e6:
-                self.u.set_samp_rate(3.2e6) # Works if USRP is 64 Msps and can decimate by 20
-                rate = self.u.get_samp_rate()
+                self.u.set_sample_rate(3.2e6) # Works if USRP is 64 Msps and can decimate by 20
+                rate = self.u.get_sample_rate()
                 if (rate != 3.2e6):
                     print "Unable to set required sample rate for >= 3MHz of 25 KHz channels."
                     sys.exit(1)
@@ -114,13 +115,9 @@ class app_top_block(gr.top_block):
 def get_options():
     parser = OptionParser(option_class=eng_option)
 
-    parser.add_option('-f', '--freq', type="eng_float", default=929.5125e6,
+    parser.add_option('-f', '--freq', type="eng_float", default=931.95e6,
                       help="Set receive frequency to FREQ [default=%default]",
                       metavar="FREQ")
-    parser.add_option("-a", "--address", type="string", default="addr=192.168.10.2",
-                      help="Address of UHD device, [default=%default]")
-    parser.add_option("-A", "--antenna", type="string", default=None,
-                      help="select Rx Antenna where appropriate")
     parser.add_option("", "--rx-gain", type="eng_float", default=None,
                       help="set receive gain in dB (default is midpoint)")
     parser.add_option("-c",   "--calibration", type="eng_float", default=0.0,
