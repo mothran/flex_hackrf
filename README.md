@@ -11,7 +11,10 @@ Make sure your hackrf is function and open to be read from:
 
 
 Now run flex.py
+
 	python flex.py -f FREQENCY
 
+	
 Example:
+
 	python flex.py -f 931.95M
