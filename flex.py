@@ -32,10 +32,10 @@ class app_top_block(gr.top_block):
 	def __init__(self, options, queue):
 		gr.top_block.__init__(self, "flex_hackrf")
 
-		# Set up HACKRF source
-		self.u = osmosdr.source_c( args="nchan=" + str(1) + " " )
+		# Set up HackRF source
+		self.u = osmosdr.source_c(args="nchan=" + str(1) + " ")
 
-		# Tune daughterboard
+		# Tune hackRF
 		r = self.u.set_center_freq(options.freq+options.calibration, 0)
 		if not r:
 			frange = self.u.get_freq_range()
@@ -85,9 +85,6 @@ class app_top_block(gr.top_block):
 		self.bank = blks2.analysis_filterbank(self.nchan, taps)
 		self.connect(self.u, self.bank)
 
-		if options.log and options.from_file == None:
-			src_sink = gr.file_sink(gr.sizeof_gr_complex, 'usrp.dat')
-			self.connect(self.u, src_sink)
 
 		mid_chan = int(self.nchan/2)
 		for i in range(self.nchan):
@@ -100,9 +97,6 @@ class app_top_block(gr.top_block):
 				self.connect((self.bank, i), gr.null_sink(gr.sizeof_gr_complex))
 			else:
 				self.connect((self.bank, i), pager.flex_demod(queue, freq, options.verbose))
-				if options.log:
-					self.connect((self.bank, i), gr.file_sink(gr.sizeof_gr_complex, 'chan_'+'%3.3f'%(freq/1e6)+'.dat'))
-
 
 def get_options():
 	parser = OptionParser(option_class=eng_option)
@@ -114,8 +108,6 @@ def get_options():
 	parser.add_option("-c",   "--calibration", type="eng_float", default=0.0,
 		help="set frequency offset to Hz", metavar="Hz")
 	parser.add_option("-v", "--verbose", action="store_true", default=False)
-	parser.add_option("-l", "--log", action="store_true", default=False,
-		help="log flowgraph to files (LOTS of data)")
 	parser.add_option("", "--nchan", type="int", default=None,
 		help="set to number of channels in capture file", metavar="nchan")
 
