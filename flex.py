@@ -28,6 +28,7 @@ from string import split, join, printable
 import sys
 import osmosdr
 
+
 class app_top_block(gr.top_block):
 	def __init__(self, options, queue):
 		gr.top_block.__init__(self, "flex_hackrf")
@@ -85,7 +86,6 @@ class app_top_block(gr.top_block):
 		self.bank = blks2.analysis_filterbank(self.nchan, taps)
 		self.connect(self.u, self.bank)
 
-
 		mid_chan = int(self.nchan/2)
 		for i in range(self.nchan):
 			if i < mid_chan:
@@ -115,6 +115,14 @@ def get_options():
 
 	return (options, args)
 
+def make_trans_table():
+	table = 256 * ['.']
+	for i in range(256):
+		if (i < 32):
+			table[i] = '.'
+		else:
+			table[i] = chr(i)
+	return ''.join(table)
 
 def main():
 
@@ -122,14 +130,19 @@ def main():
 
 	queue = gr.msg_queue()
 	tb = app_top_block(options, queue)
-	runner = pager.queue_runner(queue)
+	tb.start()
 
-	try:
-		tb.run()
-	except KeyboardInterrupt:
-		pass
+	conversion_table = make_trans_table()
+	while 1:
+		msg = queue.delete_head() # Blocking read
+		if msg.type() != 0:
+			break
+		
+		page = split(msg.to_string(), chr(128))
+		if page[2] == "ALN":
+			print page[0] + " | " + page[3].replace("\n", "")
 
-	runner.end()
+	tb.end()
 
 if __name__ == "__main__":
 	main()
