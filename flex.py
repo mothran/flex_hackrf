@@ -29,134 +29,115 @@ import sys
 import osmosdr
 
 class app_top_block(gr.top_block):
-    def __init__(self, options, queue):
-	gr.top_block.__init__(self, "usrp_flex_all")
+	def __init__(self, options, queue):
+		gr.top_block.__init__(self, "flex_hackrf")
 
-        if options.from_file is not None:
-            self.u = gr.file_source(gr.sizeof_gr_complex, options.from_file)
-            self.nchan = options.nchan
-            if options.verbose:
-                print "Reading samples from file", options.from_file
-                print "User specified file contains", options.nchan, "25 KHz channels."
+		# Set up HACKRF source
+		self.u = osmosdr.source_c( args="nchan=" + str(1) + " " )
 
-        else:
-            # Set up HACKRF source
-            self.u = osmosdr.source_c( args="nchan=" + str(1) + " " + "" )
+		# Tune daughterboard
+		r = self.u.set_center_freq(options.freq+options.calibration, 0)
+		if not r:
+			frange = self.u.get_freq_range()
+			sys.stderr.write(("\nRequested frequency (%f) out or range [%f, %f]\n") % \
+								 (freq, frange.start(), frange.stop()))
+			sys.exit(1)
 
-            # Tune daughterboard
-            r = self.u.set_center_freq(options.freq+options.calibration, 0)
-            if not r:
-                frange = self.u.get_freq_range()
-                sys.stderr.write(("\nRequested frequency (%f) out or range [%f, %f]\n") % \
-                                     (freq, frange.start(), frange.stop()))
-                sys.exit(1)
+		if options.verbose:
+			print "Tuned to center frequency", (options.freq+options.calibration)/1e6, "MHz"
 
-            if options.verbose:
-                print "Tuned to center frequency", (options.freq+options.calibration)/1e6, "MHz"
+		# if no gain was specified, use the mid-point in dB
+		if options.rx_gain is None:
+			grange = self.u.get_gain_range()
+			options.rx_gain = float(grange.start()+grange.stop())/2.0
+			print "\nNo gain specified."
+			print "Setting gain to %f (from [%f, %f])" % \
+				(options.rx_gain, grange.start(), grange.stop())
 
-            # if no gain was specified, use the mid-point in dB
-            if options.rx_gain is None:
-                grange = self.u.get_gain_range()
-                options.rx_gain = float(grange.start()+grange.stop())/2.0
-                print "\nNo gain specified."
-                print "Setting gain to %f (from [%f, %f])" % \
-                    (options.rx_gain, grange.start(), grange.stop())
+		self.u.set_gain(options.rx_gain, 0)
 
-            self.u.set_gain(options.rx_gain, 0)
+		# Grab >=3 MHz of spectrum, evenly divisible by 25 KHz channels
+		# (A UHD facility to get sample rate range and granularity would be useful)
 
-            # Grab >=3 MHz of spectrum, evenly divisible by 25 KHz channels
-            # (A UHD facility to get sample rate range and granularity would be useful)
+		self.u.set_sample_rate(3.125e6) # Works if USRP is 100 Msps and can decimate by 32
+		rate = self.u.get_sample_rate()
 
-            self.u.set_sample_rate(3.125e6) # Works if USRP is 100 Msps and can decimate by 32
-            rate = self.u.get_sample_rate()
+		if rate != 3.125e6:
+			self.u.set_sample_rate(3.2e6) # Works if USRP is 64 Msps and can decimate by 20
+			rate = self.u.get_sample_rate()
+			if (rate != 3.2e6):
+				print "Unable to set required sample rate for >= 3MHz of 25 KHz channels."
+				sys.exit(1)
 
-            if rate != 3.125e6:
-                self.u.set_sample_rate(3.2e6) # Works if USRP is 64 Msps and can decimate by 20
-                rate = self.u.get_sample_rate()
-                if (rate != 3.2e6):
-                    print "Unable to set required sample rate for >= 3MHz of 25 KHz channels."
-                    sys.exit(1)
+		self.nchan = int(rate/25e3)
+		if options.verbose:
+			print "\nReceiving", rate/1e6, "MHz of bandwidth containing", self.nchan, "baseband channels."
 
-            self.nchan = int(rate/25e3)
-            if options.verbose:
-                print "\nReceiving", rate/1e6, "MHz of bandwidth containing", self.nchan, "baseband channels."
+		taps = gr.firdes.low_pass(1.0,
+								  1.0,
+								  1.0/self.nchan*0.4,
+								  1.0/self.nchan*0.1,
+								  gr.firdes.WIN_HANN)
 
-        taps = gr.firdes.low_pass(1.0,
-                                  1.0,
-                                  1.0/self.nchan*0.4,
-                                  1.0/self.nchan*0.1,
-                                  gr.firdes.WIN_HANN)
+		if options.verbose:
+			print "Channel filter has", len(taps), "taps"
 
-        if options.verbose:
-            print "Channel filter has", len(taps), "taps"
+		self.bank = blks2.analysis_filterbank(self.nchan, taps)
+		self.connect(self.u, self.bank)
 
-        self.bank = blks2.analysis_filterbank(self.nchan, taps)
-        self.connect(self.u, self.bank)
+		if options.log and options.from_file == None:
+			src_sink = gr.file_sink(gr.sizeof_gr_complex, 'usrp.dat')
+			self.connect(self.u, src_sink)
 
-        if options.log and options.from_file == None:
-            src_sink = gr.file_sink(gr.sizeof_gr_complex, 'usrp.dat')
-            self.connect(self.u, src_sink)
+		mid_chan = int(self.nchan/2)
+		for i in range(self.nchan):
+			if i < mid_chan:
+				freq = options.freq+i*25e3
+			else:
+				freq = options.freq-(self.nchan-i)*25e3
 
-        mid_chan = int(self.nchan/2)
-        for i in range(self.nchan):
-	    if i < mid_chan:
-		freq = options.freq+i*25e3
-	    else:
-		freq = options.freq-(self.nchan-i)*25e3
-
-	    if (freq < 929.0e6 or freq > 932.0e6):
-                self.connect((self.bank, i), gr.null_sink(gr.sizeof_gr_complex))
-	    else:
-            	self.connect((self.bank, i), pager.flex_demod(queue, freq, options.verbose, options.log))
-                if options.log:
-                    self.connect((self.bank, i), gr.file_sink(gr.sizeof_gr_complex, 'chan_'+'%3.3f'%(freq/1e6)+'.dat'))
+			if (freq < 929.0e6 or freq > 932.0e6):
+				self.connect((self.bank, i), gr.null_sink(gr.sizeof_gr_complex))
+			else:
+				self.connect((self.bank, i), pager.flex_demod(queue, freq, options.verbose))
+				if options.log:
+					self.connect((self.bank, i), gr.file_sink(gr.sizeof_gr_complex, 'chan_'+'%3.3f'%(freq/1e6)+'.dat'))
 
 
 def get_options():
-    parser = OptionParser(option_class=eng_option)
+	parser = OptionParser(option_class=eng_option)
+	parser.add_option('-f', '--freq', type="eng_float", default=931.95e6,
+		help="Set receive frequency to FREQ [default=%default]",
+		metavar="FREQ")
+	parser.add_option("", "--rx-gain", type="eng_float", default=None,
+		help="set receive gain in dB (default is midpoint)")
+	parser.add_option("-c",   "--calibration", type="eng_float", default=0.0,
+		help="set frequency offset to Hz", metavar="Hz")
+	parser.add_option("-v", "--verbose", action="store_true", default=False)
+	parser.add_option("-l", "--log", action="store_true", default=False,
+		help="log flowgraph to files (LOTS of data)")
+	parser.add_option("", "--nchan", type="int", default=None,
+		help="set to number of channels in capture file", metavar="nchan")
 
-    parser.add_option('-f', '--freq', type="eng_float", default=931.95e6,
-                      help="Set receive frequency to FREQ [default=%default]",
-                      metavar="FREQ")
-    parser.add_option("", "--rx-gain", type="eng_float", default=None,
-                      help="set receive gain in dB (default is midpoint)")
-    parser.add_option("-c",   "--calibration", type="eng_float", default=0.0,
-                      help="set frequency offset to Hz", metavar="Hz")
-    parser.add_option("-v", "--verbose", action="store_true", default=False)
-    parser.add_option("-l", "--log", action="store_true", default=False,
-                      help="log flowgraph to files (LOTS of data)")
-    parser.add_option("-F", "--from-file", default=None,
-                      help="read samples from file instead of USRP")
-    parser.add_option("", "--nchan", type="int", default=None,
-                      help="set to number of channels in capture file", metavar="nchan")
+	(options, args) = parser.parse_args()
 
-    (options, args) = parser.parse_args()
-
-    if len(args) > 0:
-	print "Run 'usrp_flex_all.py -h' for options."
-	sys.exit(1)
-
-    if options.nchan is None and options.from_file is not None:
-        print "You must specify the number of baseband channels with --nchan when reading from a file"
-        sys.exit(1)
-
-    return (options, args)
+	return (options, args)
 
 
 def main():
 
-    (options, args) = get_options()
+	(options, args) = get_options()
 
-    queue = gr.msg_queue()
-    tb = app_top_block(options, queue)
-    runner = pager.queue_runner(queue)
+	queue = gr.msg_queue()
+	tb = app_top_block(options, queue)
+	runner = pager.queue_runner(queue)
 
-    try:
-        tb.run()
-    except KeyboardInterrupt:
-        pass
+	try:
+		tb.run()
+	except KeyboardInterrupt:
+		pass
 
-    runner.end()
+	runner.end()
 
 if __name__ == "__main__":
-    main()
+	main()
